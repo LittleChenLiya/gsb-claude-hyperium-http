@@ -1,0 +1,14 @@
+# Local build settings kept inside the worktree so all artifacts and temporary
+# files stay on the D: drive. `[build] target-dir` is what Cargo itself honors;
+# TMP/TEMP apply to spawned build processes (rustc, build scripts).
+#
+# Verify with:
+#   cargo metadata --format-version 1 | Select-String target_directory   (PowerShell)
+#
+# Override on the command line with CARGO_TARGET_DIR=... cargo ...
+[build]
+target-dir = "D:/Codex/gsb-cache/claude-20261007/target-1007-073"
+
+[env]
+TMP = { value = "D:/Codex/gsb-cache/tmp", relative = false }
+TEMP = { value = "D:/Codex/gsb-cache/tmp", relative = false }

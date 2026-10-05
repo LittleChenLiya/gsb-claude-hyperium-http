@@ -1276,6 +1276,13 @@ impl HeaderName {
         }
     }
 
+    /// Whether this name is one of the standard headers built into the crate,
+    /// rather than a custom (extension) field name.
+    #[inline]
+    pub(crate) fn is_standard(&self) -> bool {
+        matches!(self.inner, Repr::Standard(..))
+    }
+
     pub(super) fn into_bytes(self) -> Bytes {
         self.inner.into()
     }

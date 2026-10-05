@@ -1,3 +1,7 @@
+# Unreleased
+
+- Add `header::merge` and `header::merge_with_options` for an explicit, per-field `HeaderMap` merge: list headers are comma-joined, single-value headers (incl. `content-length`) must agree, `set-cookie` and unknown headers keep separate values, and connection-named fields are filtered by default. The inputs are never modified.
+
 # 1.5.0 (July 29, 2026)
 
 - Add `Method::QUERY` constant for the new QUERY method defined in RFC 10008.
