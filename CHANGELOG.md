@@ -1,3 +1,7 @@
+# Unreleased
+
+- Add `Uri::with_scheme()`, `Uri::with_authority()` and `Uri::with_path_and_query()` for explicit single-component URI editing. They validate the new combination before constructing a new `Uri`, leave the borrowed `Uri` unchanged, keep raw percent-encoded bytes intact, and return `uri::InvalidUriPart` (with a `uri::UriPart` component identity) on failure.
+
 # 1.5.0 (July 29, 2026)
 
 - Add `Method::QUERY` constant for the new QUERY method defined in RFC 10008.

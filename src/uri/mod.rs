@@ -23,7 +23,7 @@
 //! ```
 
 use crate::byte_str::ByteStr;
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 
 use bytes::Bytes;
 
@@ -124,6 +124,33 @@ pub struct InvalidUri(ErrorKind);
 /// An error resulting from a failed attempt to construct a URI.
 #[derive(Debug)]
 pub struct InvalidUriParts(InvalidUri);
+
+/// An error resulting from a failed attempt to construct a URI from a
+/// [`Parts`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum UriPart {
+    /// The `scheme` component was the cause of the failure.
+    Scheme,
+    /// The `authority` component was the cause of the failure.
+    Authority,
+    /// The `path_and_query` component was the cause of the failure.
+    PathAndQuery,
+}
+
+/// An error returned by the explicit `Uri` editing methods, such as
+/// [`Uri::with_scheme`], [`Uri::with_authority`] and
+/// [`Uri::with_path_and_query`].
+///
+/// Besides a description of *what* went wrong, the error records the identity
+/// of the component ([`UriPart`]) that caused the failure. The original
+/// `Uri` is never modified when this error is returned; the invalid component
+/// is rejected before any new `Uri` is constructed.
+#[derive(Debug)]
+pub struct InvalidUriPart {
+    part: UriPart,
+    source: InvalidUri,
+}
 
 #[derive(Debug, Eq, PartialEq)]
 enum ErrorKind {
@@ -389,6 +416,244 @@ impl Uri {
     #[inline]
     pub fn into_parts(self) -> Parts {
         self.into()
+    }
+
+    /// Return a new `Uri` with the scheme component replaced.
+    ///
+    /// Only the `scheme` component is taken from `scheme`; every other
+    /// component of `self` is carried over unchanged. In particular, the
+    /// `path_and_query` is reused as stored, so a percent-encoded path such
+    /// as `/a%2Fb` keeps its exact raw bytes and is never percent-encoded a
+    /// second time.
+    ///
+    /// The original `Uri` is borrowed, not mutated. The new combination is
+    /// checked for legality *before* a new `Uri` is built, so on failure
+    /// `self` is untouched and the returned [`InvalidUriPart`] names the
+    /// component responsible.
+    ///
+    /// Adding a scheme requires an authority. An origin-form URI (only a
+    /// path, such as `/foo`) therefore cannot be given a scheme this way;
+    /// use [`Uri::with_authority`] together with this method to build an
+    /// absolute-form URI. An authority-form URI (for example a `CONNECT`
+    /// target such as `example.com:443`) gains the mandatory `/` path when
+    /// it becomes an absolute-form URI, which is the same interpretation
+    /// that parsing `scheme://example.com:443` would produce.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use http::Uri;
+    /// // absolute-form
+    /// let uri = Uri::from_static("http://example.com/a%2Fb?z=1&a=2");
+    /// let uri = uri.with_scheme("https").unwrap();
+    /// assert_eq!(uri, "https://example.com/a%2Fb?z=1&a=2");
+    ///
+    /// // authority-form (CONNECT) becomes absolute-form
+    /// let uri = Uri::from_static("example.com:443");
+    /// let uri = uri.with_scheme("https").unwrap();
+    /// assert_eq!(uri, "https://example.com:443/");
+    ///
+    /// // origin-form cannot gain a scheme without an authority
+    /// let uri = Uri::from_static("/foo");
+    /// assert!(uri.with_scheme("https").is_err());
+    /// ```
+    pub fn with_scheme<T>(&self, scheme: T) -> Result<Uri, InvalidUriPart>
+    where
+        T: TryInto<Scheme>,
+        <T as TryInto<Scheme>>::Error: Into<InvalidUri>,
+    {
+        let scheme = scheme
+            .try_into()
+            .map_err(Into::into)
+            .map_err(|e| InvalidUriPart::new(UriPart::Scheme, e))?;
+        Self::assemble(Some(scheme), self.authority_cloned(), self.pq_cloned())
+    }
+
+    /// Return a new `Uri` with the authority component replaced.
+    ///
+    /// Only the `authority` component is taken from `authority`; every other
+    /// component of `self` is carried over unchanged. The stored
+    /// `path_and_query` is reused verbatim, so a percent-encoded path such
+    /// as `/a%2Fb` keeps its exact raw bytes and is never percent-encoded a
+    /// second time.
+    ///
+    /// The original `Uri` is borrowed, not mutated. The new authority is
+    /// validated and the resulting combination is checked for legality
+    /// *before* a new `Uri` is built, so on failure `self` is untouched and
+    /// the returned [`InvalidUriPart`] names the component responsible.
+    ///
+    /// The replacement authority is treated as an opaque, already parsed
+    /// component: userinfo from anywhere else is never implicitly pulled
+    /// into it. A scheme-less origin-form URI (only a path, such as `/foo`)
+    /// cannot be given an authority this way, since an authority without a
+    /// scheme is an authority-form URI which cannot carry a path; use
+    /// [`Uri::with_scheme`] as well to build an absolute-form URI.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use http::Uri;
+    /// let uri = Uri::from_static("http://example.com/a%2Fb?z=1&a=2");
+    /// // The raw `%2F` in the path is preserved after changing the host.
+    /// let uri = uri.with_authority("hyper.rs:8080").unwrap();
+    /// assert_eq!(uri, "http://hyper.rs:8080/a%2Fb?z=1&a=2");
+    ///
+    /// // an invalid authority is rejected and leaves the original intact
+    /// let err = uri.with_authority("bad host").unwrap_err();
+    /// assert_eq!(err.part(), &http::uri::UriPart::Authority);
+    /// assert_eq!(uri, "http://hyper.rs:8080/a%2Fb?z=1&a=2");
+    /// ```
+    pub fn with_authority<T>(&self, authority: T) -> Result<Uri, InvalidUriPart>
+    where
+        T: TryInto<Authority>,
+        <T as TryInto<Authority>>::Error: Into<InvalidUri>,
+    {
+        let authority = authority
+            .try_into()
+            .map_err(Into::into)
+            .map_err(|e| InvalidUriPart::new(UriPart::Authority, e))?;
+        Self::assemble(self.scheme_cloned(), Some(authority), self.pq_cloned())
+    }
+
+    /// Return a new `Uri` with the path (and optional query) component
+    /// replaced.
+    ///
+    /// Only the `path_and_query` component is taken from `path_and_query`;
+    /// every other component of `self` is carried over unchanged. The new
+    /// value is stored as given, so a percent-encoded path such as `/a%2Fb`
+    /// keeps its exact raw bytes and is never percent-encoded a second
+    /// time, and a query keeps its original parameter order.
+    ///
+    /// The original `Uri` is borrowed, not mutated. The new component is
+    /// validated and the resulting combination is checked for legality
+    /// *before* a new `Uri` is built, so on failure `self` is untouched and
+    /// the returned [`InvalidUriPart`] names the component responsible.
+    ///
+    /// An empty path is interpreted according to the form of the URI: an
+    /// absolute-form URI gets the mandatory `/`, while an authority-form
+    /// `CONNECT` target cannot carry a path at all.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use http::Uri;
+    /// // origin-form keeps its query ordering
+    /// let uri = Uri::from_static("/old?z=1&a=2");
+    /// let uri = uri.with_path_and_query("/new?z=1&a=2").unwrap();
+    /// assert_eq!(uri, "/new?z=1&a=2");
+    ///
+    /// // absolute-form
+    /// let uri = Uri::from_static("http://example.com/");
+    /// let uri = uri.with_path_and_query("/a%2Fb").unwrap();
+    /// assert_eq!(uri, "http://example.com/a%2Fb");
+    ///
+    /// // authority-form (CONNECT) cannot gain a path
+    /// let connect = Uri::from_static("example.com:443");
+    /// assert!(connect.with_path_and_query("/").is_err());
+    /// ```
+    pub fn with_path_and_query<T>(&self, path_and_query: T) -> Result<Uri, InvalidUriPart>
+    where
+        T: TryInto<PathAndQuery>,
+        <T as TryInto<PathAndQuery>>::Error: Into<InvalidUri>,
+    {
+        let path_and_query = path_and_query
+            .try_into()
+            .map_err(Into::into)
+            .map_err(|e| InvalidUriPart::new(UriPart::PathAndQuery, e))?;
+        Self::assemble(
+            self.scheme_cloned(),
+            self.authority_cloned(),
+            Some(path_and_query),
+        )
+    }
+
+    /// Build a new `Uri` from the given edited components.
+    ///
+    /// The components are validated *before* construction and are
+    /// interpreted according to the request-target form, mirroring
+    /// `Uri::from_parts` while also preserving the distinction between an
+    /// empty path in absolute-form (`/`) and the path-less authority-form
+    /// used by `CONNECT`.
+    fn assemble(
+        scheme: Option<Scheme>,
+        authority: Option<Authority>,
+        path_and_query: Option<PathAndQuery>,
+    ) -> Result<Uri, InvalidUriPart> {
+        if scheme.is_some() {
+            // absolute-form: requires an authority and a path, with an empty
+            // path interpreted as `/`.
+            let authority = authority.ok_or_else(|| {
+                InvalidUriPart::new(UriPart::Authority, ErrorKind::AuthorityMissing.into())
+            })?;
+            let path_and_query = match path_and_query {
+                Some(pq) if !pq.data.is_empty() => pq,
+                _ => PathAndQuery::slash(),
+            };
+
+            Ok(Uri {
+                scheme: scheme.unwrap(),
+                authority,
+                path_and_query,
+            })
+        } else if authority.is_some() {
+            // authority-form (e.g. a CONNECT request-target): must not carry
+            // a path or query.
+            let authority = authority.unwrap();
+            if path_and_query
+                .as_ref()
+                .map(|p| !p.data.is_empty())
+                .unwrap_or(false)
+            {
+                return Err(InvalidUriPart::new(
+                    UriPart::PathAndQuery,
+                    ErrorKind::InvalidFormat.into(),
+                ));
+            }
+
+            Ok(Uri {
+                scheme: Scheme::empty(),
+                authority,
+                path_and_query: PathAndQuery::empty(),
+            })
+        } else {
+            // origin-form or asterisk-form: only a path_and_query.
+            let path_and_query = path_and_query.ok_or_else(|| {
+                InvalidUriPart::new(UriPart::PathAndQuery, ErrorKind::PathAndQueryMissing.into())
+            })?;
+
+            Ok(Uri {
+                scheme: Scheme::empty(),
+                authority: Authority::empty(),
+                path_and_query,
+            })
+        }
+    }
+
+    #[inline]
+    fn scheme_cloned(&self) -> Option<Scheme> {
+        if self.scheme.inner.is_none() {
+            None
+        } else {
+            Some(self.scheme.clone())
+        }
+    }
+
+    #[inline]
+    fn authority_cloned(&self) -> Option<Authority> {
+        if self.authority.data.is_empty() {
+            None
+        } else {
+            Some(self.authority.clone())
+        }
+    }
+
+    #[inline]
+    fn pq_cloned(&self) -> Option<PathAndQuery> {
+        if self.path_and_query.data.is_empty() {
+            None
+        } else {
+            Some(self.path_and_query.clone())
+        }
     }
 
     /// Returns the path & query components of the Uri
@@ -1107,6 +1372,45 @@ impl fmt::Display for InvalidUriParts {
 }
 
 impl Error for InvalidUriParts {}
+
+impl InvalidUriPart {
+    fn new(part: UriPart, source: InvalidUri) -> InvalidUriPart {
+        InvalidUriPart { part, source }
+    }
+
+    /// Identifies the URI component whose replacement caused the failure.
+    pub fn part(&self) -> &UriPart {
+        &self.part
+    }
+
+    /// Returns the underlying URI validation error.
+    pub fn source_error(&self) -> &InvalidUri {
+        &self.source
+    }
+}
+
+impl fmt::Display for UriPart {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            UriPart::Scheme => "scheme",
+            UriPart::Authority => "authority",
+            UriPart::PathAndQuery => "path_and_query",
+        };
+        f.write_str(s)
+    }
+}
+
+impl fmt::Display for InvalidUriPart {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid uri {}: {}", self.part, self.source)
+    }
+}
+
+impl Error for InvalidUriPart {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&self.source)
+    }
+}
 
 impl Hash for Uri {
     fn hash<H>(&self, state: &mut H)
