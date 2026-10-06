@@ -36,12 +36,14 @@ use self::scheme::Scheme2;
 
 pub use self::authority::Authority;
 pub use self::builder::Builder;
+pub use self::edit::{EditPlan, InvalidUriEdit, UriPart};
 pub use self::path::PathAndQuery;
 pub use self::port::Port;
 pub use self::scheme::Scheme;
 
 mod authority;
 mod builder;
+mod edit;
 mod path;
 mod port;
 mod scheme;
@@ -201,6 +203,32 @@ impl Uri {
     /// ```
     pub fn builder() -> Builder {
         Builder::new()
+    }
+
+    /// Begin an explicit edit plan for this `Uri`.
+    ///
+    /// This returns an [`EditPlan`] that replaces only the parts that are
+    /// specified (`scheme`, `authority`, or `path_and_query`), validates
+    /// the new combination of parts before constructing anything, and
+    /// never modifies this `Uri`.
+    ///
+    /// # Examples
+    ///
+    /// Replace only the authority of an absolute-form URI, keeping the
+    /// raw percent-encoded path and the query order:
+    ///
+    /// ```
+    /// use http::Uri;
+    ///
+    /// let uri: Uri = "http://old.example/a%2Fb?b=1&a=2".parse().unwrap();
+    /// let uri = uri.edit().authority("new.example").unwrap().build().unwrap();
+    ///
+    /// assert_eq!(uri.to_string(), "http://new.example/a%2Fb?b=1&a=2");
+    /// ```
+    ///
+    /// Run the edit-plan tests with `cargo test --test uri_edit`.
+    pub fn edit(&self) -> EditPlan<'_> {
+        EditPlan::new(self)
     }
 
     /// Attempt to convert a `Parts` into a `Uri`.
