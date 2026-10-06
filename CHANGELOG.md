@@ -1,3 +1,7 @@
+# Unreleased
+
+- Add `HeaderMap::merge()` and `merge_with()` for explicit, field-aware merging: list fields are comma combined, `Set-Cookie` and unknown fields keep separate values, `Content-Length` must agree, and `Connection`-named hop-by-hop fields are filtered. The merge is all-or-nothing and never mutates either input map.
+
 # 1.5.0 (July 29, 2026)
 
 - Add `Method::QUERY` constant for the new QUERY method defined in RFC 10008.

@@ -37,6 +37,7 @@
 //! [*See also the `HeaderMap` type.*](HeaderMap)
 
 mod map;
+mod merge;
 mod name;
 mod value;
 
@@ -45,6 +46,7 @@ pub use self::map::{
     MaxSizeReached, OccupiedEntry, VacantEntry, ValueDrain, ValueIter, ValueIterMut, Values,
     ValuesMut,
 };
+pub use self::merge::{MergeError, MergePolicy};
 pub use self::name::{HeaderName, InvalidHeaderName};
 pub use self::value::{HeaderValue, InvalidHeaderValue, ToStrError};
 
