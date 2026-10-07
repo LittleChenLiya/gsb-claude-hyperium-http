@@ -21,6 +21,19 @@
 //! assert_eq!(uri.host(), Some("www.rust-lang.org"));
 //! assert_eq!(uri.path(), "/install.html");
 //! ```
+//!
+//! Relative references can be resolved against a base `Uri` with
+//! [`Uri::resolve`]:
+//!
+//! ```
+//! use http::Uri;
+//!
+//! let base = "http://example.com/a/b/c?old".parse::<Uri>().unwrap();
+//! assert_eq!(base.resolve("../x").unwrap(), "http://example.com/a/x");
+//! assert_eq!(base.resolve("?q").unwrap(), "http://example.com/a/b/c?q");
+//! assert_eq!(base.resolve("").unwrap(), "http://example.com/a/b/c?old");
+//! assert!(base.resolve("x#frag").is_err());
+//! ```
 
 use crate::byte_str::ByteStr;
 use std::convert::TryFrom;
@@ -44,6 +57,7 @@ mod authority;
 mod builder;
 mod path;
 mod port;
+mod resolve;
 mod scheme;
 #[cfg(test)]
 mod tests;
@@ -139,6 +153,7 @@ enum ErrorKind {
     TooLong,
     Empty,
     SchemeTooLong,
+    FragmentNotSupported,
 }
 
 // u16::MAX is reserved for None
@@ -1088,6 +1103,7 @@ impl InvalidUri {
             ErrorKind::TooLong => "uri too long",
             ErrorKind::Empty => "empty string",
             ErrorKind::SchemeTooLong => "scheme too long",
+            ErrorKind::FragmentNotSupported => "fragment not supported in HTTP URI",
         }
     }
 }
