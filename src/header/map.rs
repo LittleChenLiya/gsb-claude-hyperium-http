@@ -1662,6 +1662,82 @@ impl<T> HeaderMap<T> {
         }
     }
 
+    /// Removes all headers from the map, returning the values associated with
+    /// the key.
+    ///
+    /// Returns an empty vector if the map does not contain the key. Header
+    /// names that only differ in case refer to the same entry, so removing
+    /// `"HOST"` also removes values inserted as `"host"`. The returned values
+    /// are in their original order (the first inserted value comes first,
+    /// matching the order yielded by [`get_all`](HeaderMap::get_all)). Each
+    /// value is moved out of the map unchanged, so per-value properties such
+    /// as [`HeaderValue::is_sensitive`] are preserved and the values can later
+    /// be inserted back to reconstruct the original state.
+    ///
+    /// Unlike [`remove`](HeaderMap::remove), none of the values are dropped:
+    /// callers needing a reversible removal can keep the returned vector and
+    /// append its values back into the map.
+    ///
+    /// This API is only available when the `remove_all` feature is enabled.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "remove_all")]
+    /// # {
+    /// # use http::HeaderMap;
+    /// # use http::header::COOKIE;
+    /// let mut map = HeaderMap::new();
+    /// map.append(COOKIE, "a=1".parse().unwrap());
+    /// map.append(COOKIE, "b=2".parse().unwrap());
+    ///
+    /// let values = map.remove_all(COOKIE);
+    /// assert_eq!(values.len(), 2);
+    /// assert_eq!(values[0], "a=1");
+    /// assert_eq!(values[1], "b=2");
+    ///
+    /// // The key is gone entirely.
+    /// assert!(map.get_all(COOKIE).iter().next().is_none());
+    ///
+    /// // Inserting the values back reconstructs the original ordering.
+    /// for value in values {
+    ///     map.append(COOKIE, value);
+    /// }
+    /// let values = map.get_all(COOKIE);
+    /// let mut iter = values.iter();
+    /// assert_eq!(iter.next().unwrap(), "a=1");
+    /// assert_eq!(iter.next().unwrap(), "b=2");
+    /// # }
+    /// ```
+    #[cfg(feature = "remove_all")]
+    pub fn remove_all<K>(&mut self, key: K) -> Vec<T>
+    where
+        K: AsHeaderName,
+    {
+        match key.find(self) {
+            Some((probe, idx)) => {
+                // Detach the extra values first so that `remove_found` leaves
+                // the map in a consistent state, exactly like `remove` does.
+                let extras = match self.entries[idx].links {
+                    Some(links) => {
+                        let raw_links = self.raw_links();
+                        drain_all_extra_values(raw_links, self.extra_values_mut(), links.next)
+                    }
+                    None => Vec::new(),
+                };
+
+                // The entry holds the first (insertion-order) value.
+                let entry = self.remove_found(probe, idx);
+
+                let mut values = Vec::with_capacity(1 + extras.len());
+                values.push(entry.value);
+                values.extend(extras);
+                values
+            }
+            None => Vec::new(),
+        }
+    }
+
     /// Remove an entry from the map.
     ///
     /// Warning: To avoid inconsistent state, extra values _must_ be removed

@@ -34,6 +34,10 @@ exclude = [
 [features]
 default = ["std"]
 std = []
+# Opt-in reversible bulk removal: `HeaderMap::remove_all` returns every value
+# that was stored under a header name while preserving their original order
+# and per-value properties (e.g. `HeaderValue::is_sensitive`).
+remove_all = []
 
 [dependencies]
 bytes = "1"
