@@ -44,6 +44,7 @@ mod authority;
 mod builder;
 mod path;
 mod port;
+mod resolve;
 mod scheme;
 #[cfg(test)]
 mod tests;
@@ -139,6 +140,7 @@ enum ErrorKind {
     TooLong,
     Empty,
     SchemeTooLong,
+    FragmentNotAllowed,
 }
 
 // u16::MAX is reserved for None
@@ -1088,6 +1090,7 @@ impl InvalidUri {
             ErrorKind::TooLong => "uri too long",
             ErrorKind::Empty => "empty string",
             ErrorKind::SchemeTooLong => "scheme too long",
+            ErrorKind::FragmentNotAllowed => "fragment not allowed",
         }
     }
 }

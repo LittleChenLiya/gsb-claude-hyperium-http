@@ -517,3 +517,33 @@ fn test_partial_eq_path_with_terminating_questionmark() {
 
     assert_eq!(uri, a);
 }
+
+// Short regression example for the original interface: parsing semantics are
+// unchanged by the addition of `Uri::resolve`, and both agree on the inputs
+// they share.
+#[test]
+fn test_parse_semantics_unchanged_with_resolve() {
+    // Parsing still keeps literal dot segments as-is; only `resolve`
+    // normalizes them away.
+    let uri = Uri::from_str("http://example.com/a/./b/../c").unwrap();
+    assert_eq!(uri.path(), "/a/./b/../c");
+
+    let base = Uri::from_str("http://example.com/a/b/c").unwrap();
+    let resolved = base.resolve("../c").unwrap();
+    assert_eq!(resolved, "http://example.com/a/c");
+    assert_eq!(resolved.path(), "/a/c");
+
+    // Parsing still silently drops fragments (existing behavior)...
+    let uri = Uri::from_str("http://example.com/a#frag").unwrap();
+    assert_eq!(uri.path(), "/a");
+    assert_eq!(uri.query(), None);
+
+    // ...while `resolve` rejects them explicitly.
+    let err = base.resolve("x#frag").unwrap_err();
+    assert_eq!(err.to_string(), "fragment not allowed");
+
+    // References that are already valid `Uri` inputs parse to the same value
+    // both ways.
+    let direct = Uri::from_str("http://example.com/a/c").unwrap();
+    assert_eq!(resolved, direct);
+}
