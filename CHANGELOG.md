@@ -1,3 +1,7 @@
+# Unreleased
+
+- Add `HeaderMap::remove_all` behind the opt-in `remove_all` feature. It removes every value associated with a header name and returns them in insertion order; an empty `Vec` is returned when the name is absent, and value properties such as sensitivity are preserved. The existing `remove` method is unchanged.
+
 # 1.5.0 (July 29, 2026)
 
 - Add `Method::QUERY` constant for the new QUERY method defined in RFC 10008.

@@ -1662,6 +1662,74 @@ impl<T> HeaderMap<T> {
         }
     }
 
+    /// Removes all values associated with the header name and returns them.
+    ///
+    /// The values are returned in the order in which they were associated with
+    /// the key, i.e. the order in which `get_all` visits them and the order
+    /// produced by appending. The per-value properties (such as
+    /// [`HeaderValue::is_sensitive`]) are carried over to the returned values
+    /// untouched.
+    ///
+    /// Header names are matched by identity, so a lookup for `"set-cookie"`
+    /// also removes values inserted under `"Set-Cookie"` or `"SET-COOKIE"`.
+    /// If the map does not contain the key, an empty `Vec` is returned and the
+    /// map is left unchanged. Unlike [`remove`], no values are dropped.
+    ///
+    /// This method requires the `remove_all` feature to be enabled. The
+    /// original [`remove`] interface is unaffected by the feature.
+    ///
+    /// [`remove`]: HeaderMap::remove
+    /// [`HeaderValue::is_sensitive`]: crate::HeaderValue::is_sensitive
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "remove_all")]
+    /// # {
+    /// # use http::HeaderMap;
+    /// # use http::header::SET_COOKIE;
+    /// let mut map = HeaderMap::new();
+    /// map.append(SET_COOKIE, "a=1".parse().unwrap());
+    /// map.append(SET_COOKIE, "b=2".parse().unwrap());
+    ///
+    /// let values = map.remove_all("Set-Cookie");
+    /// assert_eq!(values.len(), 2);
+    /// assert_eq!(values[0], "a=1");
+    /// assert_eq!(values[1], "b=2");
+    /// assert!(map.is_empty());
+    ///
+    /// // A missing key yields an empty vector.
+    /// assert!(map.remove_all(SET_COOKIE).is_empty());
+    /// # }
+    /// ```
+    #[cfg(feature = "remove_all")]
+    pub fn remove_all<K>(&mut self, key: K) -> Vec<T>
+    where
+        K: AsHeaderName,
+    {
+        match key.find(self) {
+            Some((probe, idx)) => {
+                // Drain the extra values first, following the linked list in
+                // insertion order while the bucket still owns its links.
+                let extras = match self.entries[idx].links {
+                    Some(links) => {
+                        let raw_links = self.raw_links();
+                        drain_all_extra_values(raw_links, self.extra_values_mut(), links.next)
+                    }
+                    None => Vec::new(),
+                };
+
+                let entry = self.remove_found(probe, idx);
+
+                let mut values = Vec::with_capacity(extras.len() + 1);
+                values.push(entry.value);
+                values.extend(extras);
+                values
+            }
+            None => Vec::new(),
+        }
+    }
+
     /// Remove an entry from the map.
     ///
     /// Warning: To avoid inconsistent state, extra values _must_ be removed

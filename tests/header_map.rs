@@ -803,3 +803,198 @@ fn into_iter_drop_panic_after_yielding_extra_value_double_drops() {
 
     let _ = catch_unwind(AssertUnwindSafe(|| drop(iter)));
 }
+
+// ============================================================================
+// `HeaderMap::remove_all` (feature = "remove_all")
+// ============================================================================
+
+#[cfg(feature = "remove_all")]
+#[test]
+fn remove_all_missing_returns_empty_and_keeps_map() {
+    let mut headers = HeaderMap::new();
+    headers.insert(VIA, "1.1 example.com".parse().unwrap());
+
+    let cookies = headers.remove_all(SET_COOKIE);
+    assert!(cookies.is_empty());
+    assert_eq!(headers.len(), 1);
+    assert_eq!(headers[VIA], "1.1 example.com");
+}
+
+#[cfg(feature = "remove_all")]
+#[test]
+fn remove_all_empty_map() {
+    let mut headers: HeaderMap = HeaderMap::new();
+    assert!(headers.remove_all("anything").is_empty());
+    assert!(headers.is_empty());
+}
+
+#[cfg(feature = "remove_all")]
+#[test]
+fn remove_all_single_value() {
+    let mut headers = HeaderMap::new();
+    headers.insert(SET_COOKIE, "cookie_1=value 1".parse().unwrap());
+
+    let cookies = headers.remove_all(SET_COOKIE);
+    assert_eq!(cookies, vec![HeaderValue::from_static("cookie_1=value 1")]);
+    assert!(headers.is_empty());
+    assert!(headers.remove_all(SET_COOKIE).is_empty());
+}
+
+// Acceptance scenario: duplicate cookies, case-insensitive key identity,
+// sensitive values, removal order and re-insertion restoring the original
+// order.
+#[cfg(feature = "remove_all")]
+#[test]
+fn remove_all_duplicates_case_and_sensitive_roundtrip() {
+    let mut headers = HeaderMap::new();
+
+    // Insert using mixed-case names; HeaderName identity is case-insensitive.
+    headers.append("Set-Cookie", "cookie_1=value 1".parse().unwrap());
+    headers.append("SET-COOKIE", "cookie_2=value 2".parse().unwrap());
+    let mut secret: HeaderValue = "cookie_3=secret".parse().unwrap();
+    secret.set_sensitive(true);
+    headers.append("set-cookie", secret);
+    headers.insert(VIA, "1.1 example.com".parse().unwrap());
+    headers.append("vIa", "1.1 other.com".parse().unwrap());
+    headers.insert(VARY, "*".parse().unwrap());
+
+    assert_eq!(headers.len(), 6);
+
+    // Look up with yet another casing: all three cookies must come out in
+    // insertion order.
+    let cookies = headers.remove_all("sEt-CoOkIe");
+    assert_eq!(cookies.len(), 3);
+    assert_eq!(cookies[0], "cookie_1=value 1");
+    assert_eq!(cookies[1], "cookie_2=value 2");
+    assert_eq!(cookies[2], "cookie_3=secret");
+    // The sensitive flag travels with the value.
+    assert!(!cookies[0].is_sensitive());
+    assert!(!cookies[1].is_sensitive());
+    assert!(cookies[2].is_sensitive());
+
+    // Remaining map keeps the unrelated headers. (Full-map iteration follows
+    // the internal hash order, so compare as a multiset; per-key value order
+    // is checked via `get_all`.)
+    assert_eq!(headers.len(), 3);
+    assert!(!headers.contains_key(SET_COOKIE));
+    let mut remaining: Vec<(String, String)> = headers
+        .iter()
+        .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap().to_string()))
+        .collect();
+    remaining.sort();
+    assert_eq!(
+        remaining,
+        vec![
+            ("vary".to_string(), "*".to_string()),
+            ("via".to_string(), "1.1 example.com".to_string()),
+            ("via".to_string(), "1.1 other.com".to_string()),
+        ]
+    );
+    assert_eq!(
+        headers
+            .get_all(VIA)
+            .iter()
+            .map(|v| v.to_str().unwrap().to_string())
+            .collect::<Vec<_>>(),
+        vec!["1.1 example.com".to_string(), "1.1 other.com".to_string()],
+    );
+
+    // Re-insert the removed values in the returned order: the original
+    // per-key value sequence (including sensitive flags) is restored.
+    for value in cookies {
+        headers.append(SET_COOKIE, value);
+    }
+    assert_eq!(headers.len(), 6);
+    let restored: Vec<(String, bool)> = headers
+        .get_all(SET_COOKIE)
+        .iter()
+        .map(|v| (v.to_str().unwrap().to_string(), v.is_sensitive()))
+        .collect();
+    assert_eq!(
+        restored,
+        vec![
+            ("cookie_1=value 1".to_string(), false),
+            ("cookie_2=value 2".to_string(), false),
+            ("cookie_3=secret".to_string(), true),
+        ]
+    );
+    // Re-removing with the canonical name yields the same sequence again.
+    let again = headers.remove_all(SET_COOKIE);
+    assert_eq!(again.len(), 3);
+    assert!(again[2].is_sensitive());
+    assert_eq!(headers.len(), 3);
+}
+
+#[cfg(feature = "remove_all")]
+#[test]
+fn remove_all_interleaved_headers() {
+    let mut headers = HeaderMap::new();
+    headers.append(SET_COOKIE, "cookie_1".parse().unwrap());
+    headers.append(VIA, "via_1".parse().unwrap());
+    headers.append(SET_COOKIE, "cookie_2".parse().unwrap());
+    headers.append(VARY, "vary_1".parse().unwrap());
+    headers.append(SET_COOKIE, "cookie_3".parse().unwrap());
+    headers.append(VIA, "via_2".parse().unwrap());
+
+    let cookies = headers.remove_all(SET_COOKIE);
+    assert_eq!(
+        cookies,
+        vec![
+            HeaderValue::from_static("cookie_1"),
+            HeaderValue::from_static("cookie_2"),
+            HeaderValue::from_static("cookie_3"),
+        ]
+    );
+    assert_eq!(headers.len(), 3);
+
+    let vias = headers.remove_all(VIA);
+    assert_eq!(
+        vias,
+        vec![
+            HeaderValue::from_static("via_1"),
+            HeaderValue::from_static("via_2"),
+        ]
+    );
+    assert_eq!(headers.len(), 1);
+
+    let varies = headers.remove_all(VARY);
+    assert_eq!(varies, vec![HeaderValue::from_static("vary_1")]);
+    assert!(headers.is_empty());
+}
+
+#[cfg(feature = "remove_all")]
+#[test]
+fn remove_all_hands_over_values_without_dropping_them() {
+    use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+
+    static DROPS: AtomicUsize = AtomicUsize::new(0);
+
+    struct Counted(u8);
+
+    impl Drop for Counted {
+        fn drop(&mut self) {
+            DROPS.fetch_add(1, SeqCst);
+        }
+    }
+
+    DROPS.store(0, SeqCst);
+    {
+        let mut map: HeaderMap<Counted> = HeaderMap::default();
+        map.append("x-multi", Counted(1));
+        map.append("x-multi", Counted(2));
+        map.append("x-multi", Counted(3));
+        map.insert("x-other", Counted(4));
+
+        // Nothing is dropped while the values are handed over.
+        let removed = map.remove_all("X-MULTI");
+        assert_eq!(removed.len(), 3);
+        assert_eq!(DROPS.load(SeqCst), 0);
+        assert_eq!(map.len(), 1);
+
+        // Dropping the returned values drops exactly those three, once each.
+        drop(removed);
+        assert_eq!(DROPS.load(SeqCst), 3);
+    }
+    // The one value left in the map is dropped with it.
+    assert_eq!(DROPS.load(SeqCst), 4);
+}

@@ -34,6 +34,10 @@ exclude = [
 [features]
 default = ["std"]
 std = []
+# Enables `HeaderMap::remove_all`, which removes every value associated with
+# a header name and returns all of them in insertion order. The method is
+# opt-in so that existing users of `remove` keep the original interface.
+remove_all = []
 
 [dependencies]
 bytes = "1"
@@ -45,3 +49,7 @@ rand = "0.10"
 serde = "1.0"
 serde_json = "1.0"
 doc-comment = "0.3"
+
+[[example]]
+name = "remove_all_demo"
+required-features = ["remove_all"]
